@@ -4,8 +4,6 @@ import (
 	"log"
 	"os"
 
-	_ "embed"
-
 	"github.com/gonejack/mhtml-to-html/cmd"
 	"github.com/spf13/cobra"
 )
