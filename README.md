@@ -14,11 +14,12 @@ This command line converts .mhtml to .html
 ```shell
 > mhtml-to-html *.mht
 ```
+```shell
+> mhtml-to-html *.mhtml
 ```
-Usage:
-  mhtml-to-html *.mht [flags]
-
+```
 Flags:
-  -v, --verbose   verbose
-  -h, --help      help for mhtml-to-html
+  -h, --help       Show context-sensitive help.
+      --verbose    Verbose printing.
+      --about      Show about.
 ```
