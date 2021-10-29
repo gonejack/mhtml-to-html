@@ -1,5 +1,5 @@
 # mhtml-to-html
-Command line for converting mhtml to html
+This command line converts .mhtml to .html
 
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/gonejack/mhtml-to-html)
 ![Build](https://github.com/gonejack/mhtml-to-html/actions/workflows/go.yml/badge.svg)

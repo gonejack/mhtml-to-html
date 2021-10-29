@@ -5,95 +5,126 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
-	"mime"
-	"net/textproto"
-	"path/filepath"
-	"unicode"
-
 	"io"
 	"log"
-	"net/http"
-
+	"mime"
+	"net/textproto"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/gabriel-vasile/mimetype"
+	"github.com/alecthomas/kong"
 )
 
-type MHTMLToHTML struct {
-	client    http.Client
-	ImagesDir string
-	Verbose   bool
+type options struct {
+	Verbose bool     `help:"Verbose printing."`
+	About   bool     `help:"Show about."`
+	MHTML   []string `arg:"" optional:""`
 }
 
-func (h *MHTMLToHTML) Run(mhts []string) (err error) {
-	if len(mhts) == 0 {
-		mhts, _ = filepath.Glob("*.mht")
+type MHTMLToHTML struct {
+	options
+}
+
+func (h *MHTMLToHTML) Run() (err error) {
+	kong.Parse(h,
+		kong.Name("mhtml-to-html"),
+		kong.Description("This command line converts .mhtml file to .html file"),
+		kong.UsageOnError(),
+	)
+	if h.About {
+		fmt.Println("Visit https://github.com/gonejack/mhtml-to-html")
+		return
 	}
-	if len(mhts) == 0 {
+	if len(h.MHTML) == 0 {
+		for _, pattern := range []string{"*.mht", "*.mhtml"} {
+			found, _ := filepath.Glob(pattern)
+			h.MHTML = append(h.MHTML, found...)
+		}
+	}
+	if len(h.MHTML) == 0 {
 		return errors.New("no mht files given")
 	}
 
-	err = h.mkdir()
-	if err != nil {
-		return
-	}
-
-	for _, mht := range mhts {
+	for _, mht := range h.MHTML {
 		if h.Verbose {
 			log.Printf("processing %s", mht)
 		}
-
-		err = h.processMHTML(mht)
-		if err != nil {
-			return fmt.Errorf("parse %s failed: %s", mht, err)
+		if e := h.process(mht); e != nil {
+			return fmt.Errorf("parse %s failed: %s", mht, e)
 		}
 	}
 
 	return
 }
-func (h *MHTMLToHTML) processMHTML(path string) (err error) {
-	file, err := os.Open(path)
+func (h *MHTMLToHTML) process(mht string) error {
+	fd, err := os.Open(mht)
 	if err != nil {
-		return
+		return err
 	}
+	defer fd.Close()
 
-	tp := textproto.NewReader(bufio.NewReader(&trimReader{rd: file}))
+	tr := &trimReader{rd: fd}
+	tp := textproto.NewReader(bufio.NewReader(tr))
 
 	// Parse the main headers
-	headers, err := tp.ReadMIMEHeader()
+	header, err := tp.ReadMIMEHeader()
 	if err != nil {
-		return
+		return err
 	}
-
 	body := tp.R
-	ps, err := parseMIMEParts(headers, body)
+
+	parts, err := parseMIMEParts(header, body)
 	if err != nil {
-		return
+		return err
 	}
 
-	var r2p = make(map[string]*part)
 	var html *part
-	for _, p := range ps {
-		if ct := p.header.Get("Content-Type"); ct == "" {
+	var savedir = strings.TrimSuffix(mht, filepath.Ext(mht)) + "_files"
+	var saves = make(map[string]string)
+	for idx, part := range parts {
+		contentType := part.header.Get("Content-Type")
+		if contentType == "" {
 			return ErrMissingContentType
 		}
-		ct, _, err := mime.ParseMediaType(p.header.Get("Content-Type"))
+		mimetype, _, err := mime.ParseMediaType(contentType)
 		if err != nil {
 			return err
 		}
-
-		if html == nil && ct == "text/html" {
-			html = p
+		if html == nil && mimetype == "text/html" {
+			html = part
 			continue
 		}
 
-		ref := p.header.Get("Content-Location")
-		if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
-			r2p[ref] = p
+		ext := ".dat"
+		switch mimetype {
+		case mime.TypeByExtension(".jpg"):
+			ext = ".jpg"
+		default:
+			exts, err := mime.ExtensionsByType(mimetype)
+			if err != nil {
+				return err
+			}
+			if len(exts) > 0 {
+				ext = exts[0]
+			}
 		}
+
+		dir := path.Join(savedir, mimetype)
+		err = os.MkdirAll(dir, 0766)
+		if err != nil {
+			return fmt.Errorf("cannot create dir %s: %s", dir, err)
+		}
+		file := path.Join(dir, fmt.Sprintf("%d%s", idx, ext))
+		err = os.WriteFile(file, part.body, 0766)
+		if err != nil {
+			return fmt.Errorf("cannot write file%s: %s", file, err)
+		}
+		ref := part.header.Get("Content-Location")
+		saves[ref] = file
 	}
 
 	if html == nil {
@@ -102,80 +133,41 @@ func (h *MHTMLToHTML) processMHTML(path string) (err error) {
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(html.body))
 	if err != nil {
-		return
+		return err
 	}
 
-	doc.Find("img").Each(func(i int, img *goquery.Selection) {
-		h.changImgRef(img, r2p)
+	doc.Find("img,link,script").Each(func(i int, e *goquery.Selection) {
+		h.changeRef(e, saves)
 	})
 
 	data, err := doc.Html()
-	target := strings.TrimSuffix(path, filepath.Ext(path)) + ".html"
-
-	return ioutil.WriteFile(target, []byte(data), 0766)
-}
-func (h *MHTMLToHTML) changImgRef(img *goquery.Selection, parts map[string]*part) {
-	img.RemoveAttr("loading")
-	img.RemoveAttr("srcset")
-
-	src, _ := img.Attr("src")
-
-	part, exist := parts[src]
-	if !exist {
-		return
-	}
-
-	if part.diskPath == "" {
-		fp, err := os.CreateTemp(h.ImagesDir, "image_*")
-		if err != nil {
-			log.Printf("cannot create temp file for %s: %s", src, err)
-			return
-		}
-		_, err = fp.Write(part.body)
-		if err != nil {
-			log.Printf("cannot write temp file for %s: %s", src, err)
-			return
-		}
-		_ = fp.Close()
-
-		// check mime
-		fmime, err := mimetype.DetectFile(fp.Name())
-		if err != nil {
-			log.Printf("cannot detect image mime of %s: %s", src, err)
-			return
-		}
-		if !strings.HasPrefix(fmime.String(), "image") {
-			log.Printf("mime of %s is %s instead of images", src, fmime.String())
-			return
-		}
-
-		canonical := fp.Name() + fmime.Extension()
-
-		_ = os.Rename(fp.Name(), canonical)
-
-		part.diskPath = canonical
-
-		if h.Verbose {
-			log.Printf("save %s as %s", src, canonical)
-		}
-	}
-
-	img.SetAttr("src", part.diskPath)
-}
-func (h *MHTMLToHTML) mkdir() error {
-	err := os.MkdirAll(h.ImagesDir, 0777)
 	if err != nil {
-		return fmt.Errorf("cannot make images dir %s", err)
+		return err
 	}
 
-	return nil
+	target := strings.TrimSuffix(mht, filepath.Ext(mht)) + ".html"
+	return os.WriteFile(target, []byte(data), 0766)
+}
+func (h *MHTMLToHTML) changeRef(e *goquery.Selection, saves map[string]string) {
+	attr := "src"
+	switch e.Get(0).Data {
+	case "img":
+		e.RemoveAttr("loading")
+		e.RemoveAttr("srcset")
+	case "link":
+		attr = "href"
+	}
+	ref, _ := e.Attr(attr)
+	local, exist := saves[ref]
+	if exist {
+		e.SetAttr(attr, local)
+	}
 }
 
 // part is a copyable representation of a multipart.Part
 type part struct {
-	header   textproto.MIMEHeader
-	body     []byte
-	diskPath string
+	header textproto.MIMEHeader
+	body   []byte
 }
 
 // trimReader is a custom io.Reader that will trim any leading
