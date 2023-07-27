@@ -1,14 +1,13 @@
 module github.com/gonejack/mhtml-to-html
 
-go 1.18
+go 1.20
 
 require (
-	github.com/PuerkitoBio/goquery v1.7.1
-	github.com/alecthomas/kong v0.2.17
+	github.com/PuerkitoBio/goquery v1.8.1
+	github.com/alecthomas/kong v0.8.0
 )
 
 require (
-	github.com/andybalholm/cascadia v1.2.0 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
-	golang.org/x/net v0.0.0-20210614182718-04defd469f4e // indirect
+	github.com/andybalholm/cascadia v1.3.1 // indirect
+	golang.org/x/net v0.7.0 // indirect
 )

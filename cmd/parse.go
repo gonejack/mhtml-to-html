@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -28,7 +29,7 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 	}
 	ct, params, err := mime.ParseMediaType(hs.Get("Content-Type"))
 	if err != nil {
-		return ps, err
+		return ps, fmt.Errorf("parse content-type [%s] failed: %s", hs.Get("Content-Type"), err)
 	}
 	// If it's a multipart email, recursively parse the parts
 	if strings.HasPrefix(ct, "multipart/") {

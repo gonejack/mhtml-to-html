@@ -184,9 +184,23 @@ func (tr *trimReader) Read(buf []byte) (int, error) {
 		return n, err
 	}
 	if !tr.trimmed {
-		t := bytes.TrimLeftFunc(buf[:n], unicode.IsSpace)
+		t := bytes.TrimLeftFunc(buf[:n], tr.isSpace)
 		tr.trimmed = true
 		n = copy(buf, t)
 	}
 	return n, err
+}
+func (tr *trimReader) isSpace(r rune) bool {
+	const (
+		ZWSP   = '\u200B' // ZWSP represents zero-width space.
+		ZWNBSP = '\uFEFF' // ZWNBSP represents zero-width no-break space.
+		ZWJ    = '\u200D' // ZWJ represents zero-width joiner.
+		ZWNJ   = '\u200C' // ZWNJ represents zero-width non-joiner.
+	)
+	switch r {
+	case ZWSP, ZWNBSP, ZWJ, ZWNJ:
+		return true
+	default:
+		return unicode.IsSpace(r)
+	}
 }
