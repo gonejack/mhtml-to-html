@@ -48,7 +48,6 @@ func (h *MHTMLToHTML) Run() (err error) {
 	if len(h.MHTML) == 0 {
 		return errors.New("no mht files given")
 	}
-
 	for _, mht := range h.MHTML {
 		if h.Verbose {
 			log.Printf("processing %s", mht)
@@ -57,7 +56,6 @@ func (h *MHTMLToHTML) Run() (err error) {
 			return fmt.Errorf("parse %s failed: %s", mht, e)
 		}
 	}
-
 	return
 }
 func (h *MHTMLToHTML) process(mht string) error {
@@ -66,22 +64,15 @@ func (h *MHTMLToHTML) process(mht string) error {
 		return err
 	}
 	defer fd.Close()
-
-	tr := &trimReader{rd: fd}
-	tp := textproto.NewReader(bufio.NewReader(tr))
-
-	// Parse the main headers
-	header, err := tp.ReadMIMEHeader()
+	tp := textproto.NewReader(bufio.NewReader(&trimReader{rd: fd}))
+	hdr, err := tp.ReadMIMEHeader()
 	if err != nil {
 		return err
 	}
-	body := tp.R
-
-	parts, err := parseMIMEParts(header, body)
+	parts, err := parseMIMEParts(hdr, tp.R)
 	if err != nil {
 		return err
 	}
-
 	var html *part
 	var savedir = strings.TrimSuffix(mht, filepath.Ext(mht)) + "_files"
 	var saves = make(map[string]string)
@@ -126,7 +117,6 @@ func (h *MHTMLToHTML) process(mht string) error {
 		ref := part.header.Get("Content-Location")
 		saves[ref] = file
 	}
-
 	if html == nil {
 		return errors.New("html not found")
 	}
@@ -135,18 +125,15 @@ func (h *MHTMLToHTML) process(mht string) error {
 	if err != nil {
 		return err
 	}
-
 	doc.Find("img,link,script").Each(func(i int, e *goquery.Selection) {
 		h.changeRef(e, saves)
 	})
-
-	data, err := doc.Html()
+	txt, err := doc.Html()
 	if err != nil {
 		return err
 	}
-
 	target := strings.TrimSuffix(mht, filepath.Ext(mht)) + ".html"
-	return os.WriteFile(target, []byte(data), 0766)
+	return os.WriteFile(target, []byte(txt), 0766)
 }
 func (h *MHTMLToHTML) changeRef(e *goquery.Selection, saves map[string]string) {
 	attr := "src"
@@ -164,20 +151,15 @@ func (h *MHTMLToHTML) changeRef(e *goquery.Selection, saves map[string]string) {
 	}
 }
 
-// part is a copyable representation of a multipart.Part
 type part struct {
 	header textproto.MIMEHeader
 	body   []byte
 }
-
-// trimReader is a custom io.Reader that will trim any leading
-// whitespace, as this can cause email imports to fail.
 type trimReader struct {
 	rd      io.Reader
 	trimmed bool
 }
 
-// Read trims off any unicode whitespace from the originating reader
 func (tr *trimReader) Read(buf []byte) (int, error) {
 	n, err := tr.rd.Read(buf)
 	if err != nil {
